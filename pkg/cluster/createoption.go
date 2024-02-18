@@ -17,6 +17,7 @@ limitations under the License.
 package cluster
 
 import (
+	"context"
 	"time"
 
 	"sigs.k8s.io/kind/pkg/apis/config/v1alpha4"
@@ -121,6 +122,31 @@ func CreateWithDisplayUsage(displayUsage bool) CreateOption {
 func CreateWithDisplaySalutation(displaySalutation bool) CreateOption {
 	return createOptionAdapter(func(o *internalcreate.ClusterOptions) error {
 		o.DisplaySalutation = displaySalutation
+		return nil
+	})
+}
+
+type ErrorCreatePaused interface {
+	error
+	Resume(ctx context.Context) error
+}
+
+// CreateWithPauseAfterNodeProvisioning is similar to the
+// CreateWithStopBeforeSetupKubnernetes option, but can continue rest of the
+// create operation. If this option is used, the create operation will be
+// paused, after provisioning the node containers and the error
+// ErrorCreatePaused returned.
+//
+// While the create operation is paused, you can provision the node containers
+// with their own custom setup (e.g. prumb networks) and then call the Resume
+// method of the ErrorCreatePaused to resume the rest of the create operation.
+// It is your responsibility to ensure that the operation during the pause is
+// safe and does not interfere with the rest of the create.
+//
+// This option is experimental and it's subject to change or removal.
+func CreateWithPauseAfterNodeProvisioning(pauseAfterNodeProvisioning bool) CreateOption {
+	return createOptionAdapter(func(o *internalcreate.ClusterOptions) error {
+		o.PauseAfterNodeProvisioning = true
 		return nil
 	})
 }

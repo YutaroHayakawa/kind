@@ -17,11 +17,8 @@ limitations under the License.
 package create
 
 import (
-	"fmt"
-	"math/rand"
+	"context"
 	"time"
-
-	"github.com/alessio/shellescape"
 
 	"sigs.k8s.io/kind/pkg/cluster/internal/delete"
 	"sigs.k8s.io/kind/pkg/cluster/internal/providers"
@@ -33,13 +30,15 @@ import (
 
 	"sigs.k8s.io/kind/pkg/cluster/internal/create/actions"
 	configaction "sigs.k8s.io/kind/pkg/cluster/internal/create/actions/config"
+	"sigs.k8s.io/kind/pkg/cluster/internal/create/actions/displaysalutation"
+	"sigs.k8s.io/kind/pkg/cluster/internal/create/actions/displayusage"
+	"sigs.k8s.io/kind/pkg/cluster/internal/create/actions/exportkubeconfig"
 	"sigs.k8s.io/kind/pkg/cluster/internal/create/actions/installcni"
 	"sigs.k8s.io/kind/pkg/cluster/internal/create/actions/installstorage"
 	"sigs.k8s.io/kind/pkg/cluster/internal/create/actions/kubeadminit"
 	"sigs.k8s.io/kind/pkg/cluster/internal/create/actions/kubeadmjoin"
 	"sigs.k8s.io/kind/pkg/cluster/internal/create/actions/loadbalancer"
 	"sigs.k8s.io/kind/pkg/cluster/internal/create/actions/waitforready"
-	"sigs.k8s.io/kind/pkg/cluster/internal/kubeconfig"
 )
 
 const (
@@ -62,6 +61,23 @@ type ClusterOptions struct {
 	// Options to control output
 	DisplayUsage      bool
 	DisplaySalutation bool
+	// Pause create operation after node provisioning
+	PauseAfterNodeProvisioning bool
+}
+
+// errorCreatePaused implements ErrorCreatePaused interface
+type errorCreatePaused struct {
+	opts    *ClusterOptions
+	ctx     *actions.ActionContext
+	actions []actions.Action
+}
+
+func (e *errorCreatePaused) Error() string {
+	return "create paused"
+}
+
+func (e *errorCreatePaused) Resume(ctx context.Context) error {
+	return runActions(e.opts, e.ctx, e.actions)
 }
 
 // Cluster creates a cluster
