@@ -92,13 +92,13 @@ func get(p providers.Provider, name string, external bool) (*kubeconfig.Config, 
 
 	// if we're doing external we need to override the server endpoint
 	server := ""
-	if external {
-		endpoint, err := p.GetAPIServerEndpoint(name)
-		if err != nil {
-			return nil, err
-		}
-		server = "https://" + endpoint
-	}
+	// if external {
+	// 	endpoint, err := p.GetAPIServerEndpoint(name)
+	// 	if err != nil {
+	// 		return nil, err
+	// 	}
+	// 	server = "https://" + endpoint
+	// }
 
 	// actually encode
 	return kubeconfig.KINDFromRawKubeadm(buff.String(), name, server)
