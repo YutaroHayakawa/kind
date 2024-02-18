@@ -17,6 +17,7 @@ limitations under the License.
 package kubeconfig
 
 import (
+	"fmt"
 	"os"
 
 	"sigs.k8s.io/kind/pkg/errors"
@@ -47,6 +48,8 @@ func WriteMerged(kindConfig *Config, explicitConfigPath string) error {
 	if err := merge(existing, kindConfig); err != nil {
 		return err
 	}
+
+	fmt.Println(configPath)
 
 	// write back out
 	return write(existing, configPath)
