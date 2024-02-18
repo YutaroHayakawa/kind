@@ -111,64 +111,75 @@ func Cluster(logger log.Logger, p providers.Provider, opts *ClusterOptions) erro
 		loadbalancer.NewAction(), // setup external loadbalancer
 		configaction.NewAction(), // setup kubeadm config
 	}
-	if !opts.StopBeforeSettingUpKubernetes {
-		actionsToRun = append(actionsToRun,
-			kubeadminit.NewAction(opts.Config), // run kubeadm init
-		)
-		// this step might be skipped, but is next after init
-		if !opts.Config.Networking.DisableDefaultCNI {
-			actionsToRun = append(actionsToRun,
-				installcni.NewAction(), // install CNI
-			)
-		}
-		// add remaining steps
-		actionsToRun = append(actionsToRun,
-			installstorage.NewAction(),                // install StorageClass
-			kubeadmjoin.NewAction(),                   // run kubeadm join
-			waitforready.NewAction(opts.WaitForReady), // wait for cluster readiness
-		)
+	if !opts.StopBeforeSettingUpKubernetes && !opts.PauseAfterNodeProvisioning {
+		// Add rest of the actions
+		actionsToRun = append(actionsToRun, bottomHalfActions(opts)...)
 	}
 
 	// run all actions
 	actionsContext := actions.NewActionContext(logger, status, p, opts.Config)
-	for _, action := range actionsToRun {
-		if err := action.Execute(actionsContext); err != nil {
+	if err := runActions(opts, actionsContext, actionsToRun); err != nil {
+		return err
+	}
+
+	// if we are pausing, create continuation error
+	if opts.PauseAfterNodeProvisioning {
+		return &errorCreatePaused{
+			opts:    opts,
+			ctx:     actionsContext,
+			actions: bottomHalfActions(opts),
+		}
+	}
+
+	return nil
+}
+
+func runActions(opts *ClusterOptions, ctx *actions.ActionContext, actions []actions.Action) error {
+	for _, action := range actions {
+		if err := action.Execute(ctx); err != nil {
 			if !opts.Retain {
-				_ = delete.Cluster(logger, p, opts.Config.Name, opts.KubeconfigPath)
+				_ = delete.Cluster(ctx.Logger, ctx.Provider, ctx.Config.Name, opts.KubeconfigPath)
 			}
 			return err
 		}
 	}
+	return nil
+}
 
-	// skip the rest if we're not setting up kubernetes
-	if opts.StopBeforeSettingUpKubernetes {
-		return nil
-	}
-
-	// try exporting kubeconfig with backoff for locking failures
-	// TODO: factor out into a public errors API w/ backoff handling?
-	// for now this is easier than coming up with a good API
-	var err error
-	for _, b := range []time.Duration{0, time.Millisecond, time.Millisecond * 50, time.Millisecond * 100} {
-		time.Sleep(b)
-		if err = kubeconfig.Export(p, opts.Config.Name, opts.KubeconfigPath, true); err == nil {
-			break
-		}
-	}
-	if err != nil {
-		return err
-	}
-
+func bottomHalfActions(opts *ClusterOptions) []actions.Action {
+	actionsToRun := []actions.Action{}
+	actionsToRun = append(actionsToRun, kubernetesSetupActions(opts)...)
+	// export kubeconfig
+	actionsToRun = append(actionsToRun, exportkubeconfig.NewAction(opts.KubeconfigPath))
 	// optionally display usage
 	if opts.DisplayUsage {
-		logUsage(logger, opts.Config.Name, opts.KubeconfigPath)
+		actionsToRun = append(actionsToRun, displayusage.NewAction(opts.KubeconfigPath))
 	}
 	// optionally give the user a friendly salutation
 	if opts.DisplaySalutation {
-		logger.V(0).Info("")
-		logSalutation(logger)
+		actionsToRun = append(actionsToRun, displaysalutation.NewAction())
 	}
-	return nil
+	return actionsToRun
+}
+
+func kubernetesSetupActions(opts *ClusterOptions) []actions.Action {
+	actionsToRun := []actions.Action{}
+	actionsToRun = append(actionsToRun,
+		kubeadminit.NewAction(opts.Config), // run kubeadm init
+	)
+	// this step might be skipped, but is next after init
+	if !opts.Config.Networking.DisableDefaultCNI {
+		actionsToRun = append(actionsToRun,
+			installcni.NewAction(), // install CNI
+		)
+	}
+	// add remaining steps
+	actionsToRun = append(actionsToRun,
+		installstorage.NewAction(),                // install StorageClass
+		kubeadmjoin.NewAction(),                   // run kubeadm join
+		waitforready.NewAction(opts.WaitForReady), // wait for cluster readiness
+	)
+	return actionsToRun
 }
 
 // alreadyExists returns an error if the cluster name already exists
@@ -182,30 +193,6 @@ func alreadyExists(p providers.Provider, name string) error {
 		return errors.Errorf("node(s) already exist for a cluster with the name %q", name)
 	}
 	return nil
-}
-
-func logUsage(logger log.Logger, name, explicitKubeconfigPath string) {
-	// construct a sample command for interacting with the cluster
-	kctx := kubeconfig.ContextForCluster(name)
-	sampleCommand := fmt.Sprintf("kubectl cluster-info --context %s", kctx)
-	if explicitKubeconfigPath != "" {
-		// explicit path, include this
-		sampleCommand += " --kubeconfig " + shellescape.Quote(explicitKubeconfigPath)
-	}
-	logger.V(0).Infof(`Set kubectl context to "%s"`, kctx)
-	logger.V(0).Infof("You can now use your cluster with:\n\n" + sampleCommand)
-}
-
-func logSalutation(logger log.Logger) {
-	salutations := []string{
-		"Have a nice day! 👋",
-		"Thanks for using kind! 😊",
-		"Not sure what to do next? 😅  Check out https://kind.sigs.k8s.io/docs/user/quick-start/",
-		"Have a question, bug, or feature request? Let us know! https://kind.sigs.k8s.io/#community 🙂",
-	}
-	r := rand.New(rand.NewSource(time.Now().UTC().UnixNano()))
-	s := salutations[r.Intn(len(salutations))]
-	logger.V(0).Info(s)
 }
 
 func fixupOptions(opts *ClusterOptions) error {
